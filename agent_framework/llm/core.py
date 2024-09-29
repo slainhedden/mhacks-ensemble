@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import json
 from openai import OpenAI
@@ -13,22 +13,49 @@ if not openai_api_key:
 
 class Task(BaseModel):
     task_description: str
+    estimated_complexity: str
     completed: bool = False
 
 class OA_LLM:
     def __init__(self):
         self.client = OpenAI(api_key=openai_api_key)
+        self.model = "gpt-4o-mini"
 
-    def generate_response(self, prompt: str) -> str:
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content
-    
+    def generate_response(self, system_prompt: str, user_prompt: str, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        if tools:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+            )
+        else:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages
+            )
+        
+        choice = response.choices[0]
+        message = choice.message
+        
+        if choice.finish_reason == "tool_calls":
+            return {
+                "function_call": {
+                    "name": message.tool_calls[0].function.name,
+                    "arguments": message.tool_calls[0].function.arguments
+                }
+            }
+        else:
+            return {"content": message.content}
+
     def generate_structured_response(self, system_prompt: str, user_prompt: str) -> List[Task]:
         response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
