@@ -11,9 +11,12 @@ class BasicCLI:
         self.tasks = []
         self.current_task = ""
         self.last_output = ""
+        self.goal_input_event = Event()
+        self.user_goal = ""
+        self.input_lock = Event()
 
     def start(self):
-        with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
+        with self.term.fullscreen(), self.term.cbreak():
             self.render_thread = Thread(target=self.render_loop)
             self.render_thread.start()
             self.input_loop()
@@ -24,16 +27,27 @@ class BasicCLI:
 
     def render_loop(self):
         while not self.should_exit.is_set():
-            self.render_screen()
+            if not self.input_lock.is_set():
+                self.render_screen()
             self.process_updates()
             self.should_exit.wait(timeout=0.1)
 
     def input_loop(self):
         while not self.should_exit.is_set():
-            with self.term.location(0, self.term.height - 1):
-                command = input(self.term.white_on_black("Enter command (q to quit): "))
+            if not self.goal_input_event.is_set():
+                self.get_user_goal()
+            else:
+                command = self.get_user_input("Enter command (q to quit): ")
                 if command.lower() == 'q':
                     self.should_exit.set()
+
+    def get_user_input(self, prompt):
+        self.input_lock.set()
+        with self.term.location(0, self.term.height - 1):
+            print(self.term.clear_eol + self.term.white_on_black(prompt), end='', flush=True)
+            user_input = input()
+        self.input_lock.clear()
+        return user_input
 
     def render_screen(self):
         print(self.term.home + self.term.clear)
@@ -72,6 +86,15 @@ class BasicCLI:
 
     def update(self, update_type, content):
         self.update_queue.put({'type': update_type, 'content': content})
+
+    def get_user_goal(self):
+        self.input_lock.set()
+        with self.term.location(0, self.term.height - 1):
+            print(self.term.clear_eol + self.term.white_on_black("Enter your goal: "), end='', flush=True)
+            self.user_goal = input()
+        self.input_lock.clear()
+        self.goal_input_event.set()
+        return self.user_goal
 
 def main():
     cli = BasicCLI()

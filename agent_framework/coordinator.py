@@ -2,6 +2,7 @@ import logging
 from typing import List, Dict, Any
 from collections import Counter
 from agent_factory import AgentFactory
+import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -29,10 +30,9 @@ class Coordinator:
 
             for task in tasks:
                 self._process_task(task)
-                if self.cli:
-                    self.cli.update('task', task['task_description'])
 
             self._output_tool_usage_stats()
+            self.review_overall_progress()
         except Exception as e:
             logger.error(f"An error occurred while processing the goal: {str(e)}", exc_info=True)
             raise
@@ -49,26 +49,20 @@ class Coordinator:
             
             result = self.agents[agent_type].execute_task(task, self.overall_goal)
             
-            # Handle the new dictionary return type
-            if isinstance(result, dict):
-                result_str = result.get('result', str(result))
-                logger.info(f"Task execution result: {result_str[:100]}...")
-                if self.cli:
-                    self.cli.update('output', result_str)
-                
-                # Update tool usage
-                if 'tool' in result:
-                    self.tool_usage[result['tool']] += 1
-                
-                # Log sandbox result if available
-                if 'sandbox_result' in result:
-                    logger.info(f"Sandbox result: {result['sandbox_result'][:100]}...")  # Log first 100 chars of sandbox result
-            else:
-                logger.info(f"Task execution result: {str(result)[:100]}...")
-                if self.cli:
-                    self.cli.update('output', str(result))
+            # Ensure result is always a dictionary
+            if isinstance(result, str):
+                result = {'content': result}
             
-            review_result = self.agents["review"].review_task(task, str(result), self.overall_goal)
+            result_str = json.dumps(result)
+            logger.info(f"Task execution result: {result_str[:100]}...")
+            if self.cli:
+                self.cli.update('output', result_str)
+            
+            # Update tool usage
+            if 'tool' in result:
+                self.tool_usage[result['tool']] += 1
+            
+            review_result = self.agents["review"].review_task(task, result, self.overall_goal)
             logger.info(f"Review result: {review_result}")
 
             if not review_result["approved"]:
@@ -111,3 +105,8 @@ class Coordinator:
         # This should use the run_code_in_sandbox function from the ToolHandler
         # Return the sandbox execution result as a string
         pass
+
+    def review_overall_progress(self):
+        progress_summary = self.agents["review"].review_overall_progress(self.task_history, self.overall_goal)
+        logger.info(f"Overall Progress Review: {progress_summary}")
+        # Implement logic to adjust the plan or create new tasks based on this review

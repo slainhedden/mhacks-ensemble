@@ -2,9 +2,7 @@ from typing import Dict, Any
 
 '''
 Purpose: Creates or overwrites a file with the specified content. Usage: Use this function to save data either as part of the project code. Should be used creating a new file or when overwriting incorrect code. 
-
 '''
-
 
 TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = [
     {
@@ -83,6 +81,23 @@ TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = [
                     }
                 },
                 "required": ["task_id", "summary"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_human_review",
+            "description": "Request a human to review a file and provide feedback.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The path to the file that needs human review."
+                    }
+                },
+                "required": ["file_path"]
             }
         }
     }

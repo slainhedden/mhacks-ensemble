@@ -3,6 +3,8 @@ import logging
 from typing import Dict, Any, Tuple
 from .file_ops import FileOperations
 from .sandbox import run_python_file
+from .artifacts import run_artifact_review
+import os
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -10,6 +12,7 @@ logger = logging.getLogger(__name__)
 class ToolHandler:
     def __init__(self):
         self.file_ops = FileOperations()
+        # Remove the initialization of self.artifact_reviewer from here
 
     def handle_tool_call(self, function_call: Dict[str, Any], task_id: int) -> Tuple[str, bool]:
         tool_name = function_call["name"]
@@ -33,6 +36,8 @@ class ToolHandler:
             return self._handle_mark_task_complete(args, task_id)
         elif tool_name == "run_python_file":
             return self._handle_run_python_file(args, task_id)
+        elif tool_name == "request_human_review":
+            return self._handle_request_human_review(args, task_id)
         else:
             error_msg = f"Unknown function call: {tool_name} for task {task_id}"
             logger.error(error_msg)
@@ -112,3 +117,33 @@ class ToolHandler:
             error_msg = f"Error running Python file for task {task_id}: {str(e)}"
             logger.error(error_msg)
             return error_msg, False
+
+    def _handle_request_human_review(self, args: Dict[str, Any], task_id: int) -> Tuple[str, bool]:
+        try:
+            file_path = args["file_path"]
+            
+            # Read the content of the file
+            content = self.file_ops.read_file(True, file_path)
+            
+            # Determine the file type and set the appropriate content
+            file_extension = os.path.splitext(file_path)[1].lower()
+            html_content = content if file_extension == '.html' else ""
+            css_content = content if file_extension == '.css' else ""
+            js_content = content if file_extension == '.js' else ""
+            
+            # Call run_artifact_review with the correct arguments
+            review_result = run_artifact_review(
+                os.path.join(os.getcwd(), "src"),
+                html_content,
+                css_content,
+                js_content
+            )
+            
+            if isinstance(review_result, dict) and "error" in review_result:
+                return review_result["error"], False
+            return f"Human review completed for {file_path}. Feedback: {review_result['feedback']}, Rating: {review_result['rating']}/5", True
+        except Exception as e:
+            error_msg = f"Error requesting human review for task {task_id}: {str(e)}"
+            logger.error(error_msg)
+            return error_msg, False
+

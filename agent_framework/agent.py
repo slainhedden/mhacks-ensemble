@@ -15,7 +15,7 @@ class Agent:
         self.name = name
         self.role = role
         self.attributes = attributes
-        self.context_manager = ContextManager()
+        self.context_manager = ContextManager(max_entries=50)  # Use the sliding window
         self.file_ops = FileOperations()
         self.tool_handler = ToolHandler()
         self.llm = OA_LLM()
@@ -54,13 +54,18 @@ class Agent:
         if "function_call" in response:
             function_call = response["function_call"]
             self.logger.info(f"Function call detected: {function_call['name']}")
-            result, success = self.tool_handler.handle_tool_call(function_call, task['id'])
-            if success:
-                self.add_context({"action": "tool_usage", "task": task['id'], "result": result, "tool": function_call['name']})
-                self.logger.info(f"Tool call successful: {result}")
-            else:
-                self.logger.error(f"Tool call failed: {result}")
-            return result
+            try:
+                result, success = self.tool_handler.handle_tool_call(function_call, task['id'])
+                if success:
+                    self.add_context({"action": "tool_usage", "task": task['id'], "result": result, "tool": function_call['name']})
+                    self.logger.info(f"Tool call successful: {result}")
+                else:
+                    self.logger.error(f"Tool call failed: {result}")
+                return result
+            except Exception as e:
+                error_msg = f"Error in tool call: {str(e)}"
+                self.logger.error(error_msg)
+                return error_msg
         elif "content" in response:
             self.logger.info("No function call, returning content")
             return response["content"]

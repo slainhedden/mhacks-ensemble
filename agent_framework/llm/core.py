@@ -53,15 +53,15 @@ class OA_LLM:
         else:
             return {"content": message.content}
 
-    def generate_structured_response(self, system_prompt: str, user_prompt: str) -> List[Task]:
+    def generate_structured_response(self, system_prompt: str, user_prompt: str) -> Dict[str, List[Dict[str, Any]]]:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": f"{user_prompt}\n\nPlease provide your response in JSON format."}
             ],
             response_format={"type": "json_object"}
         )
         
         tasks_data = json.loads(response.choices[0].message.content)
-        return [Task(**task) for task in tasks_data.get("tasks", [])]
+        return tasks_data  # This should be a dictionary with a 'tasks' key
