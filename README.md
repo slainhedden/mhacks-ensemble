@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Multi-Agent Framework is an advanced AI-powered system designed to break down complex tasks into manageable subtasks and execute them using specialized agents. This framework leverages OpenAI's language models to analyze goals, plan tasks, write code, perform testing, and conduct reviews.
+The Multi-Agent Framework is an advanced AI-powered system designed to break down complex tasks into manageable subtasks and execute them using specialized agents. This framework leverages OpenAI's language model(gpt-4o-mini) to analyze goals, plan tasks, write code, perform testing, and conduct reviews.
 
 ## Key Features
 
