@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any
 from collections import Counter
-from agent_factory import AgentFactory
+from llm.core import OA_LLM, Task, Agent, AgentResponse, ProgressReview
 import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -10,13 +10,7 @@ logger = logging.getLogger(__name__)
 class Coordinator:
     def __init__(self, cli=None):
         self.cli = cli
-        self.agents = {
-            "planner": AgentFactory.create_agent("planner", "PlannerAgent", {}),
-            "coding": AgentFactory.create_agent("coding", "CodingAgent", {}),
-            "testing": AgentFactory.create_agent("testing", "TestingAgent", {}),
-            "review": AgentFactory.create_agent("review", "ReviewAgent", {})
-        }
-        self.task_history = []
+        self.llm = OA_LLM()
         self.overall_goal = ""
         self.tool_usage = Counter()
 
@@ -24,72 +18,64 @@ class Coordinator:
         try:
             self.overall_goal = goal
             logger.info(f"Processing goal: {goal}")
-            tasks = self.agents["planner"].analyze_goal(goal)
-            self.task_history = tasks
-            logger.info(f"Goal broken down into {len(tasks)} tasks")
-
-            for task in tasks:
+            
+            # Create agents
+            agents = self.llm.create_agents(goal)
+            logger.info(f"Created {len(agents)} agents")
+            
+            # Create tasks
+            tasks = self.llm.create_tasks(goal)
+            logger.info(f"Created {len(tasks)} tasks")
+            
+            # Assign tasks
+            assigned_tasks = self.llm.assign_tasks()
+            logger.info("Tasks assigned to agents")
+            
+            # Process tasks
+            for task in assigned_tasks:
                 self._process_task(task)
 
             self._output_tool_usage_stats()
             self.review_overall_progress()
+        except ValueError as ve:
+            logger.error(f"Value error occurred while processing the goal: {str(ve)}")
         except Exception as e:
-            logger.error(f"An error occurred while processing the goal: {str(e)}", exc_info=True)
-            raise
+            logger.error(f"An unexpected error occurred while processing the goal: {str(e)}", exc_info=True)
 
-    def _process_task(self, task: Dict[str, Any], retry_count: int = 0):
+    def _process_task(self, task: Task, retry_count: int = 0):
         if retry_count >= 3:
-            logger.warning(f"Failed to complete task after 3 attempts: {task['task_description']}")
+            logger.warning(f"Failed to complete task after 3 attempts: {task.task_description}")
             return
 
         try:
-            logger.info(f"Processing task {task['id']}: {task['task_description']}")
-            agent_type = self.determine_agent_type(task)
-            logger.info(f"Assigned to {agent_type} agent")
+            logger.info(f"Processing task: {task.task_description}")
+            logger.info(f"Assigned to agent: {task.assigned_agent}")
             
-            result = self.agents[agent_type].execute_task(task, self.overall_goal)
+            result = self.llm.execute_task(task)
             
-            # Ensure result is always a dictionary
-            if isinstance(result, str):
-                result = {'content': result}
-            
-            result_str = json.dumps(result)
+            result_str = json.dumps(result.dict())
             logger.info(f"Task execution result: {result_str[:100]}...")
             if self.cli:
                 self.cli.update('output', result_str)
             
             # Update tool usage
-            if 'tool' in result:
-                self.tool_usage[result['tool']] += 1
+            if result.tool:
+                self.tool_usage[result.tool] += 1
             
-            review_result = self.agents["review"].review_task(task, result, self.overall_goal)
-            logger.info(f"Review result: {review_result}")
+            approved = self.llm.review_task(task, result)
 
-            if not review_result["approved"]:
-                self.handle_unapproved_task(task, review_result["feedback"], retry_count)
+            if not approved:
+                self.handle_unapproved_task(task, retry_count)
             else:
-                logger.info(f"Task {task['id']} completed successfully")
-                task['completed'] = True
+                logger.info(f"Task completed successfully")
+                task.completed = True
         except Exception as e:
-            logger.error(f"An error occurred while processing task {task['id']}: {str(e)}", exc_info=True)
-            self.handle_unapproved_task(task, f"Error: {str(e)}", retry_count)
+            logger.error(f"An error occurred while processing task: {str(e)}", exc_info=True)
+            self.handle_unapproved_task(task, retry_count)
 
-    def determine_agent_type(self, task: Dict[str, Any]) -> str:
-        task_description = task['task_description'].lower()
-        if "implement" in task_description or "code" in task_description:
-            return "coding"
-        elif "test" in task_description or "execute" in task_description or "run" in task_description:
-            return "testing"
-        return "coding"  # Default to coding agent
-
-    def handle_unapproved_task(self, task: Dict[str, Any], feedback: str, retry_count: int):
-        logger.warning(f"Task {task['id']} not approved: {task['task_description']}")
-        logger.warning(f"Feedback: {feedback}")
-        
-        updated_task = task.copy()
-        updated_task['task_description'] += f"\nPrevious attempt feedback: {feedback}"
-        
-        self._process_task(updated_task, retry_count + 1)
+    def handle_unapproved_task(self, task: Task, retry_count: int):
+        logger.warning(f"Task not approved: {task.task_description}")
+        self._process_task(task, retry_count + 1)
 
     def _output_tool_usage_stats(self):
         logger.info("Tool Usage Statistics:")
@@ -97,16 +83,24 @@ class Coordinator:
             logger.info(f"{tool}: used {count} times")
         logger.info(f"Total tool uses: {sum(self.tool_usage.values())}")
         
-        completed_tasks = sum(1 for task in self.task_history if task.get('completed', False))
-        logger.info(f"Completed tasks: {completed_tasks}/{len(self.task_history)}")
-
-    def run_in_sandbox(self, task: Dict[str, Any], result: Dict[str, Any]) -> str:
-        # Implement sandbox execution logic here
-        # This should use the run_code_in_sandbox function from the ToolHandler
-        # Return the sandbox execution result as a string
-        pass
+        completed_tasks = sum(1 for task in self.llm.tasks if task.completed)
+        logger.info(f"Completed tasks: {completed_tasks}/{len(self.llm.tasks)}")
 
     def review_overall_progress(self):
-        progress_summary = self.agents["review"].review_overall_progress(self.task_history, self.overall_goal)
-        logger.info(f"Overall Progress Review: {progress_summary}")
-        # Implement logic to adjust the plan or create new tasks based on this review
+        progress_review = self.llm.review_progress(self.overall_goal)
+        logger.info(f"Overall Progress Review: {progress_review.model_dump()}")
+        self._adjust_plan_based_on_review(progress_review)
+
+    def _adjust_plan_based_on_review(self, progress_review: ProgressReview):
+        # Implement logic to adjust the plan or create new tasks based on the progress review
+        # This could involve creating new tasks or modifying existing ones
+        pass
+
+    def review_task(self, task, result):
+        is_approved = self.llm.review_task(task, result)
+        if not is_approved:
+            feedback = "Task not approved. Please ensure you're creating or modifying files as required. Avoid repeatedly checking the project structure without making changes."
+            logger.warning(f"Task not approved: {task['task_description']}. Feedback: {feedback}")
+            return False, feedback
+
+        return True, "Task approved."

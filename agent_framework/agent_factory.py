@@ -1,61 +1,77 @@
 from typing import List, Dict, Any, Union
 from agent import Agent
 from prompts.agent_prompts import AgentPrompts
-from tools.definitions import TOOL_DEFINITIONS, TOOL_DEFINITIONS_REVIEWER
-from tools.artifacts import run_artifact_review
+from tools.definitions import TOOL_DEFINITIONS
 import json
 import os
+from models import TaskList, AgentResponse, ReviewResult, ProgressReview
+from llm.core import OA_LLM
 
 class AgentFactory:
-    @staticmethod
-    def create_agent(agent_type: str, name: str, attributes: Dict[str, Any]) -> Agent:
-        if agent_type == "planner":
-            return PlannerAgent(name, attributes)
-        elif agent_type == "coding":
-            return CodingAgent(name, attributes)
-        elif agent_type == "testing":
-            return TestingAgent(name, attributes)
-        elif agent_type == "review":
-            return ReviewAgent(name, attributes)
-        else:
+    def __init__(self):
+        self.agent_registry = {}
+        self.collaborative_memory = {}
+        self.llm = OA_LLM()
+
+    def create_agent(self, agent_type: str, name: str, attributes: Dict[str, Any]) -> Agent:
+        # Dynamically create agents and register them in the agent registry
+        agent = self._initialize_agent(agent_type, name, attributes)
+        self.agent_registry[agent.name] = agent
+        return agent
+
+    def _initialize_agent(self, agent_type: str, name: str, attributes: Dict[str, Any]) -> Agent:
+        agent_class = self._get_agent_class(agent_type)
+        return agent_class(name, attributes, self.collaborative_memory)
+
+    def _get_agent_class(self, agent_type: str) -> type:
+        agent_classes = {
+            "planner": PlannerAgent,
+            "coding": CodingAgent,
+            "testing": TestingAgent,
+            "review": ReviewAgent,
+            "research": ResearchAgent,
+            "debug": DebugAgent,
+            "optimization": OptimizationAgent,
+        }
+        if agent_type not in agent_classes:
             raise ValueError(f"Unknown agent type: {agent_type}")
+        return agent_classes[agent_type]
+
+    def remove_agent(self, name: str):
+        # Remove an agent from the registry once it has finished its task
+        if name in self.agent_registry:
+            del self.agent_registry[name]
+
+    def get_agent(self, name: str) -> Agent:
+        # Retrieve a specific agent by name
+        return self.agent_registry.get(name, None)
+
+    def list_agents(self) -> Dict[str, Agent]:
+        # List all currently active agents
+        return self.agent_registry
+
+    def update_collaborative_memory(self, key: str, value: Any):
+        self.collaborative_memory[key] = value
+
+    def get_collaborative_memory(self, key: str) -> Any:
+        return self.collaborative_memory.get(key)
 
 class PlannerAgent(Agent):
-    def __init__(self, name: str, attributes: Dict[str, Any]):
+    def __init__(self, name: str, attributes: Dict[str, Any], collaborative_memory: Dict[str, Any]):
         super().__init__(name, "Planner", attributes)
+        self.collaborative_memory = collaborative_memory
+        self.llm = OA_LLM()
 
     def analyze_goal(self, goal: str) -> List[Dict[str, Any]]:
         system_prompt = AgentPrompts.GOAL_ANALYSIS_SYSTEM.value
-        user_prompt = AgentPrompts.GOAL_ANALYSIS_USER.value.format(goal=goal, context=self.get_context())
+        user_prompt = AgentPrompts.GOAL_ANALYSIS_USER.value.format(
+            goal=goal,
+            context=self.get_relevant_context(goal)
+        )
         response = self.llm.generate_structured_response(system_prompt, user_prompt)
         
-        tasks = []
-        if isinstance(response, dict) and 'tasks' in response:
-            for i, task in enumerate(response['tasks']):
-                task_type = self._determine_task_type(task['task_description'])
-                file_path = self._extract_file_path(task['task_description'])
-                tasks.append({
-                    "id": i+1,
-                    "task_description": task['task_description'],
-                    "estimated_complexity": task.get('estimated_complexity', 'Medium'),
-                    "task_type": task_type,
-                    "file_path": file_path
-                })
-        else:
-            self.logger.error(f"Invalid response format from LLM: {response}")
-        
-        if not tasks:
-            self.logger.warning("No valid tasks were created. Using a default task.")
-            tasks = [{
-                "id": 1,
-                "task_description": "Analyze the goal and create a plan",
-                "estimated_complexity": "Medium",
-                "task_type": "planning",
-                "file_path": ""
-            }]
-
-        self.logger.info(f"Created {len(tasks)} tasks")
-        return tasks
+        task_list = TaskList(**response)
+        return [task.dict() for task in task_list.tasks]
 
     def _determine_task_type(self, task_description: str) -> str:
         if any(keyword in task_description.lower() for keyword in ['implement', 'code', 'write']):
@@ -91,8 +107,9 @@ class PlannerAgent(Agent):
         }
 
 class CodingAgent(Agent):
-    def __init__(self, name: str, attributes: Dict[str, Any]):
+    def __init__(self, name: str, attributes: Dict[str, Any], collaborative_memory: Dict[str, Any]):
         super().__init__(name, "Coder", attributes)
+        self.collaborative_memory = collaborative_memory
 
     def execute_task(self, task: Dict[str, Any], overall_goal: str) -> Dict[str, Any]:
         system_prompt = AgentPrompts.CODING_TASK_SYSTEM.value
@@ -101,58 +118,18 @@ class CodingAgent(Agent):
             context=self.get_relevant_context(task['task_description']),
             goal=overall_goal
         )
-        response = self.llm.generate_response(system_prompt, user_prompt, TOOL_DEFINITIONS + TOOL_DEFINITIONS_REVIEWER)
-        result = self.handle_tool_call(response, task)
-        
-        # Ensure result is always a dictionary
-        if isinstance(result, str):
-            result = {'content': result}
-        
-        file_type = self._determine_file_type(task)
-        if file_type == 'python':
-            sandbox_result = self.run_code_in_sandbox(task, result)
-            result['sandbox_result'] = sandbox_result
-        else:
-            result['manual_testing_strategy'] = self._generate_manual_testing_strategy(file_type)
-        
-        return result
-
-    def _determine_file_type(self, task: Dict[str, Any]) -> str:
-        task_description = task['task_description'].lower()
-        if '.py' in task_description:
-            return 'python'
-        elif '.html' in task_description:
-            return 'html'
-        elif '.css' in task_description:
-            return 'css'
-        elif '.js' in task_description:
-            return 'javascript'
-        else:
-            return 'unknown'
-
-    def _generate_manual_testing_strategy(self, file_type: str) -> str:
-        strategies = {
-            'html': "1. Open the HTML file in multiple browsers to check for compatibility.\n2. Verify the structure and content of the page.\n3. Check for responsive design by resizing the browser window.",
-            'css': "1. Inspect the styles in the browser's developer tools.\n2. Verify that the styles are applied correctly to the HTML elements.\n3. Test responsiveness at different screen sizes.",
-            'javascript': "1. Open the browser's console to check for any errors.\n2. Test all interactive elements and verify they work as expected.\n3. Check that the game logic functions correctly for all possible scenarios."
-        }
-        return strategies.get(file_type, "Please review the file manually and provide feedback on its functionality and appearance.")
-
-    def run_code_in_sandbox(self, task: Dict[str, Any], result: Dict[str, Any]) -> str:
-        # Implement sandbox execution logic here
-        # Use the run_python_file function from the ToolHandler
-        file_path = result.get('file_path', '')
-        is_unit_test = result.get('is_unit_test', False)
-        
-        if file_path:
-            sandbox_result = self.tool_handler.run_python_file(file_path, is_unit_test)
-            return f"Sandbox execution result:\nReturn Code: {sandbox_result['return_code']}\nOutput: {sandbox_result['output']}\nErrors: {sandbox_result['errors']}"
-        else:
-            return "No file path provided for sandbox execution."
+        response = self.llm.generate_response(system_prompt, user_prompt, tools=TOOL_DEFINITIONS)
+        try:
+            agent_response = AgentResponse.parse_obj(response)
+            result = self.handle_tool_call(agent_response.dict(), task)
+            return result
+        except ValueError as e:
+            raise ValueError(f"Invalid response format: {e}")
 
 class TestingAgent(Agent):
-    def __init__(self, name: str, attributes: Dict[str, Any]):
+    def __init__(self, name: str, attributes: Dict[str, Any], collaborative_memory: Dict[str, Any]):
         super().__init__(name, "Tester", attributes)
+        self.collaborative_memory = collaborative_memory
 
     def execute_task(self, task: Dict[str, Any], overall_goal: str) -> Dict[str, Any]:
         system_prompt = AgentPrompts.TESTING_TASK_SYSTEM.value
@@ -161,60 +138,32 @@ class TestingAgent(Agent):
             context=self.get_relevant_context(task['task_description']),
             goal=overall_goal
         )
-        combined_tools = TOOL_DEFINITIONS + TOOL_DEFINITIONS_REVIEWER
-        response = self.llm.generate_response(system_prompt, user_prompt, combined_tools)
+        response = self.llm.generate_response(system_prompt, user_prompt, tools=TOOL_DEFINITIONS)
         result = self.handle_tool_call(response, task)
         
         # Ensure result is always a dictionary
         if isinstance(result, str):
             result = {'content': result}
         
-        return result
+        return result       
 
 class ReviewAgent(Agent):
-    def __init__(self, name: str, attributes: Dict[str, Any]):
+    def __init__(self, name: str, attributes: Dict[str, Any], collaborative_memory: Dict[str, Any]):
         super().__init__(name, "Review", attributes)
+        self.collaborative_memory = collaborative_memory
+        self.llm = OA_LLM()
 
-    def review_task(self, task: Dict[str, Any], result: Union[str, Dict[str, Any]], overall_goal: str) -> Dict[str, Any]:
-        if isinstance(result, str):
-            result = {'content': result}
-        
+    def review_task(self, task: Dict[str, Any], result: Dict[str, Any], overall_goal: str) -> Dict[str, Any]:
         system_prompt = AgentPrompts.TASK_REVIEW_SYSTEM.value
         user_prompt = AgentPrompts.TASK_REVIEW_USER.value.format(
             task=json.dumps(task),
             result=json.dumps(result),
             overall_goal=overall_goal
         )
-
-        response = self.llm.generate_response(system_prompt, user_prompt)
-        review_result = response["content"].strip()
-
-        return self._process_review_result(review_result)
-
-    def _process_review_result(self, review_result: str) -> Dict[str, Any]:
-        lines = review_result.split('\n')
-        approval = lines[0].lower().startswith("approved")
-        feedback = self._summarize_feedback('\n'.join(lines[1:]).strip())
-
-        return {
-            "approved": approval,
-            "feedback": feedback
-        }
-
-    def _summarize_feedback(self, feedback: str) -> str:
-        # Summarize the feedback to focus on key points
-        key_points = []
-        if "Error:" in feedback:
-            key_points.append(feedback.split("Error:")[1].split('\n')[0].strip())
-        if "Missing:" in feedback:
-            key_points.append(feedback.split("Missing:")[1].split('\n')[0].strip())
-        if "Improvement:" in feedback:
-            key_points.append(feedback.split("Improvement:")[1].split('\n')[0].strip())
+        response = self.llm.generate_structured_response(system_prompt, user_prompt)
         
-        if not key_points:
-            return feedback[:100] + "..." if len(feedback) > 100 else feedback
-        
-        return " | ".join(key_points)
+        review_result = ReviewResult(**response)
+        return review_result.dict()
 
     def review_overall_progress(self, task_history: List[Dict[str, Any]], overall_goal: str) -> str:
         system_prompt = AgentPrompts.PROGRESS_REVIEW_SYSTEM.value
@@ -222,21 +171,70 @@ class ReviewAgent(Agent):
             task_history=json.dumps(task_history),
             overall_goal=overall_goal
         )
-
-        response = self.llm.generate_response(system_prompt, user_prompt)
-        return self._summarize_progress_review(response["content"].strip())
-
-    def _summarize_progress_review(self, review: str) -> str:
-        # Summarize the progress review to focus on key points
-        summary = []
-        if "Progress:" in review:
-            summary.append(review.split("Progress:")[1].split('\n')[0].strip())
-        if "Missing:" in review:
-            summary.append(review.split("Missing:")[1].split('\n')[0].strip())
-        if "Next steps:" in review:
-            summary.append(review.split("Next steps:")[1].split('\n')[0].strip())
+        response = self.llm.generate_structured_response(system_prompt, user_prompt)
         
-        if not summary:
-            return review[:150] + "..." if len(review) > 150 else review
+        progress_review = ProgressReview(**response)
+        return progress_review.dict()
+
+class ResearchAgent(Agent):
+    def __init__(self, name: str, attributes: Dict[str, Any], collaborative_memory: Dict[str, Any]):
+        super().__init__(name, "Research", attributes)
+        self.collaborative_memory = collaborative_memory
+
+    def execute_task(self, task: Dict[str, Any], overall_goal: str) -> Dict[str, Any]:
+        system_prompt = AgentPrompts.RESEARCH_TASK_SYSTEM.value
+        user_prompt = AgentPrompts.RESEARCH_TASK_USER.value.format(
+            task=task['task_description'],
+            context=self.get_relevant_context(task['task_description']),
+            goal=overall_goal
+        )
+        response = self.llm.generate_response(system_prompt, user_prompt, tools=TOOL_DEFINITIONS)
+        result = self.handle_tool_call(response, task)
         
-        return " | ".join(summary)
+        if isinstance(result, str):
+            result = {'content': result}
+        
+        self.collaborative_memory[f"research_task_{task['id']}"] = result
+        return result
+
+class DebugAgent(Agent):
+    def __init__(self, name: str, attributes: Dict[str, Any], collaborative_memory: Dict[str, Any]):
+        super().__init__(name, "Debug", attributes)
+        self.collaborative_memory = collaborative_memory
+
+    def execute_task(self, task: Dict[str, Any], overall_goal: str) -> Dict[str, Any]:
+        system_prompt = AgentPrompts.DEBUG_TASK_SYSTEM.value
+        user_prompt = AgentPrompts.DEBUG_TASK_USER.value.format(
+            task=task['task_description'],
+            context=self.get_relevant_context(task['task_description']),
+            goal=overall_goal
+        )
+        response = self.llm.generate_response(system_prompt, user_prompt, tools=TOOL_DEFINITIONS)
+        result = self.handle_tool_call(response, task)
+        
+        if isinstance(result, str):
+            result = {'content': result}
+        
+        self.collaborative_memory[f"debug_task_{task['id']}"] = result
+        return result
+
+class OptimizationAgent(Agent):
+    def __init__(self, name: str, attributes: Dict[str, Any], collaborative_memory: Dict[str, Any]):
+        super().__init__(name, "Optimization", attributes)
+        self.collaborative_memory = collaborative_memory
+
+    def execute_task(self, task: Dict[str, Any], overall_goal: str) -> Dict[str, Any]:
+        system_prompt = AgentPrompts.OPTIMIZATION_TASK_SYSTEM.value
+        user_prompt = AgentPrompts.OPTIMIZATION_TASK_USER.value.format(
+            task=task['task_description'],
+            context=self.get_relevant_context(task['task_description']),
+            goal=overall_goal
+        )
+        response = self.llm.generate_response(system_prompt, user_prompt, tools=TOOL_DEFINITIONS)
+        result = self.handle_tool_call(response, task)
+        
+        if isinstance(result, str):
+            result = {'content': result}
+        
+        self.collaborative_memory[f"optimization_task_{task['id']}"] = result
+        return result

@@ -2,11 +2,13 @@ from coordinator import Coordinator
 import logging
 from cli.base import BasicCLI
 import threading
+import os
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def main():
+    logger.info(f"Current working directory: {os.getcwd()}")
     # cli = BasicCLI()
     coordinator = Coordinator()
     
@@ -14,15 +16,15 @@ def main():
     # cli_thread.start()
 
     goal = """
-    Create a simple task management system with the following features:
-    1. Implement a Task class with attributes: id, title, description, status (todo, in_progress, done)
-    2. Create a TaskManager class to handle adding, updating, and listing tasks
-    3. Implement a simple command-line interface to interact with the TaskManager
-    4. Add functionality to save tasks to a JSON file and load them on startup
-    5. Implement basic error handling and input validation
-    6. Write unit tests for the Task and TaskManager classes
-    7. Add a feature to set due dates for tasks and list tasks by due date
-    8. Implement a simple priority system (low, medium, high) for tasks
+    Create a Tic-Tac-Toe web application using HTML, CSS, and JavaScript with the following features:
+    1. Implement a 3x3 game board using HTML and CSS
+    2. Create the game logic in JavaScript, including turn-taking and win condition checking
+    3. Add a reset button to start a new game
+    4. Implement a score tracking system for X and O
+    5. Add basic animations for placing X's and O's
+    6. Make the game responsive for different screen sizes
+    7. Implement a simple AI for single-player mode (optional)
+    8. Add sound effects for game actions (optional)
     """
     try:
         coordinator.process_goal(goal)

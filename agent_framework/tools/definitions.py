@@ -1,104 +1,155 @@
-from typing import Dict, Any
+from typing import Dict, List, Any
 
 '''
 Purpose: Creates or overwrites a file with the specified content. Usage: Use this function to save data either as part of the project code. Should be used creating a new file or when overwriting incorrect code. 
 '''
 
-TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = [
+TOOL_DEFINITIONS = [
     {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write content to a file in the directory for context to the other agents, or to a project file in the src folder if the file is part of the project code. Use the is_project_file boolean to determine where to write the file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "is_project_file": {
-                        "type": "boolean",
-                        "description": "Whether the file is in the project folder"
-                    },
-                    "filename": {
-                        "type": "string",
-                        "description": "The name of the file to write (including extension), the file must be a valid file name and not attempt to create a folder. No file names can include a forward slash."
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The content to write to the file"
-                    }
+        "name": "write_file",
+        "description": "Write content to a file in the project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "The path of the file to write to, relative to the current directory"
                 },
-                "required": ["is_project_file", "filename", "content"]
-            }
+                "content": {
+                    "type": "string",
+                    "description": "The content to write to the file"
+                }
+            },
+            "required": ["file_path", "content"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read the content of a file from either the project folder or the agent files directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "is_project_file": {
-                        "type": "boolean",
-                        "description": "Whether the file is in the project folder"
-                    },
-                    "filename": {
-                        "type": "string",
-                        "description": "The name of the file to read (including extension)"
-                    }
-                },
-                "required": ["is_project_file", "filename"]
-            }
+        "name": "read_file",
+        "description": "Read content from a file in the project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "The path of the file to read from, relative to the current directory"
+                }
+            },
+            "required": ["file_path"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "read_codebase",
-            "description": "Read and return the entire codebase structure including file contents from the project folder.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
+        "name": "append_file",
+        "description": "Append content to a file in the project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "The path of the file to append to, relative to the current directory"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The content to append to the file"
+                }
+            },
+            "required": ["file_path", "content"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "mark_task_complete",
-            "description": "Mark the current task as complete and update the context.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {
-                        "type": "integer",
-                        "description": "The ID of the task to mark as complete"
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "A brief summary of what was accomplished in the task"
-                    }
-                },
-                "required": ["task_id", "summary"]
-            }
+        "name": "delete_file",
+        "description": "Delete a file from the project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "The path of the file to delete, relative to the current directory"
+                }
+            },
+            "required": ["file_path"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "request_human_review",
-            "description": "Request a human to review a file and provide feedback.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The path to the file that needs human review."
-                    }
+        "name": "create_directory",
+        "description": "Create a new directory in the project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dir_path": {
+                    "type": "string",
+                    "description": "The path of the directory to create, relative to the current directory"
+                }
+            },
+            "required": ["dir_path"]
+        }
+    },
+    {
+        "name": "delete_directory",
+        "description": "Delete a directory from the project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dir_path": {
+                    "type": "string",
+                    "description": "The path of the directory to delete, relative to the current directory"
+                }
+            },
+            "required": ["dir_path"]
+        }
+    },
+    {
+        "name": "list_directory",
+        "description": "List the contents of a directory",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dir_path": {
+                    "type": "string",
+                    "description": "The path of the directory to list, relative to the current directory"
+                }
+            },
+            "required": ["dir_path"]
+        }
+    },
+    {
+        "name": "set_current_directory",
+        "description": "Set the current working directory",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dir_path": {
+                    "type": "string",
+                    "description": "The path to set as the current directory, relative to the project root"
+                }
+            },
+            "required": ["dir_path"]
+        }
+    },
+    {
+        "name": "get_project_structure",
+        "description": "Get the current project structure and working directory",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "run_python_file",
+        "description": "Run a Python file in the project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "The path of the Python file to execute, relative to the current directory"
                 },
-                "required": ["file_path"]
-            }
+                "is_unit_test": {
+                    "type": "boolean",
+                    "description": "Set to true if this is a unit test file",
+                    "default": False
+                }
+            },
+            "required": ["file_path"]
         }
     }
 ]

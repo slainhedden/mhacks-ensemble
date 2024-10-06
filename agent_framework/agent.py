@@ -4,14 +4,13 @@ from typing import Dict, Any, List
 from llm.core import OA_LLM
 from tools.file_ops import FileOperations
 from tools.tool_handler import ToolHandler
-from utils.context_manager import ContextManager
-from utils.code_reviewer import CodeReviewer
+from utils.project_context import ContextManager
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Agent:
-    def __init__(self, name: str, role: str, attributes: dict):
+    def __init__(self, name: str, role: str, attributes: Dict[str, Any]):
         self.name = name
         self.role = role
         self.attributes = attributes
@@ -20,7 +19,6 @@ class Agent:
         self.tool_handler = ToolHandler()
         self.llm = OA_LLM()
         self.output_log = []
-        self.code_reviewer = CodeReviewer()
         self.logger = logging.getLogger(f"{self.__class__.__name__}")
 
     def add_context(self, entry: Dict[str, Any]):
@@ -32,14 +30,14 @@ class Agent:
         self.output_log.append(message)
         self.logger.info(message)
 
-    def execute_task(self, task: Dict[str, Any], overall_goal: str) -> str:
+    def execute_task(self, task: Dict[str, Any], overall_goal: str) -> Dict[str, Any]:
         try:
             self.logger.info(f"Executing task: {task['task_description']}")
             # This method should be implemented by subclasses
             raise NotImplementedError("Subclasses must implement execute_task method")
         except Exception as e:
             self.logger.error(f"Error executing task: {str(e)}")
-            return f"Error: {str(e)}"
+            return {"error": str(e)}
 
     def get_context(self) -> str:
         return self.context_manager.get_context()
@@ -76,4 +74,4 @@ class Agent:
 
     def review_task(self, task: Dict[str, Any], result: str, overall_goal: str) -> Dict[str, Any]:
         # This method should be implemented by the ReviewAgent subclass
-        raise NotImplementedError("ReviewAgent must implement review_task method")
+        raise NotImplementedError("ReviewAgent must implement review_task method")      
